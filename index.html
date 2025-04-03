@@ -4,23 +4,72 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Duelo de Gêneros Spotify</title>
-  <!-- Bootstrap CSS para responsividade e estilo -->
+  <!-- Bootstrap CSS para responsividade -->
   <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
   <style>
-    body { padding: 20px; }
-    .genre-btn { margin: 10px; font-size: 1.5rem; }
-    .artist-item { cursor: pointer; padding: 10px; border-bottom: 1px solid #ddd; }
-    .artist-item:hover { background-color: #f8f9fa; }
-    .progress { margin-bottom: 10px; }
+    /* Identidade visual inspirada no Spotify */
+    body {
+      background-color: #191414;
+      color: #FFFFFF;
+      font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      padding: 20px;
+    }
+    h1, h2, h3, h4 {
+      color: #FFFFFF;
+    }
+    .btn {
+      border-radius: 50px;
+      font-weight: bold;
+    }
+    /* Botão de login com a cor característica do Spotify */
+    #login-btn {
+      background-color: #1DB954;
+      border: none;
+      color: #191414;
+      padding: 15px 30px;
+      font-size: 1.2rem;
+    }
+    /* Botões de gêneros sem exibir pontuação */
+    .genre-btn {
+      margin: 10px;
+      font-size: 1.5rem;
+      background-color: transparent;
+      border: 2px solid #FFFFFF;
+      color: #FFFFFF;
+      padding: 10px 20px;
+      border-radius: 50px;
+      transition: background-color 0.3s;
+    }
+    .genre-btn:hover {
+      background-color: #1DB954;
+      border-color: #1DB954;
+      color: #191414;
+    }
+    .artist-item {
+      cursor: pointer;
+      padding: 10px;
+      border-bottom: 1px solid #333;
+    }
+    .artist-item:hover {
+      background-color: #333;
+    }
+    .progress {
+      margin-bottom: 10px;
+      background-color: #333;
+      height: 20px;
+    }
+    .progress-bar {
+      background-color: #1DB954;
+    }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1 class="text-center">Duelo de Gêneros Spotify</h1>
+    <h1 class="text-center mb-4">Duelo de Gêneros Spotify</h1>
     
     <!-- Seção de login -->
     <div id="login-section" class="text-center my-4">
-      <button id="login-btn" class="btn btn-success btn-lg">Logar com o Spotify</button>
+      <button id="login-btn" class="btn btn-lg">Logar com o Spotify</button>
     </div>
     
     <!-- Seção de progresso -->
@@ -35,7 +84,7 @@
     <div id="duel-section" style="display:none;" class="text-center">
       <h2>Escolha seu Gênero</h2>
       <div id="duel-buttons" class="d-flex justify-content-center flex-wrap">
-        <!-- Aqui serão inseridos os botões dos gêneros -->
+        <!-- Botões dos gêneros serão inseridos aqui -->
       </div>
       <button id="done-btn" class="btn btn-primary mt-3">Pronto</button>
     </div>
@@ -51,7 +100,7 @@
   
   <!-- Scripts JavaScript -->
   <script>
-    // Variáveis globais para armazenar os dados
+    // Variáveis globais
     let accessToken = null;
     // Estrutura para cada gênero: { score: 0, artists: { [artistId]: count } }
     let genreData = {};
@@ -62,7 +111,7 @@
     // Dados completos dos artistas: { [artistId]: { name, genres, savedCount } }
     let allArtistData = {};
 
-    // Atualiza a barra de progresso (0 a 100%)
+    // Atualiza a barra de progresso
     function updateProgress(percent) {
       const progressBar = document.getElementById('progress-bar');
       progressBar.style.width = percent + '%';
@@ -76,7 +125,7 @@
       return params.get('access_token');
     }
 
-    // Função para redirecionar para o login do Spotify
+    // Redireciona para o login do Spotify
     function login() {
       const clientId = 'cdbe0b644b984a6e98839e352d87bb3d';
       const redirectUri = window.location.origin + window.location.pathname;
@@ -91,7 +140,7 @@
 
     document.getElementById('login-btn').addEventListener('click', login);
 
-    // Ao carregar a página, verifica se há token de acesso
+    // Verifica se há token de acesso ao carregar a página
     window.onload = async function() {
       accessToken = getAccessTokenFromHash();
       if (accessToken) {
@@ -101,12 +150,12 @@
       }
     };
 
-    // Busca todas as músicas salvas, utilizando paginação de 50 em 50 itens
+    // Busca todas as músicas salvas com paginação de 50 em 50
     async function fetchSavedTracks() {
       let allTracks = [];
       let limit = 50;
       let offset = 0;
-      let total = 1; // valor inicial dummy para entrar no loop
+      let total = 1; // valor inicial para entrar no loop
       while (offset < total) {
         let response = await fetch(`https://api.spotify.com/v1/me/tracks?limit=${limit}&offset=${offset}`, {
           headers: { 'Authorization': 'Bearer ' + accessToken }
@@ -122,7 +171,7 @@
       await processTracks(allTracks);
     }
 
-    // Processa as músicas salvas para contar quantas vezes cada artista aparece
+    // Processa as músicas para contar quantas vezes cada artista aparece
     async function processTracks(tracks) {
       let artistCounts = {}; // { artistId: count }
       tracks.forEach(item => {
@@ -136,7 +185,7 @@
       await fetchArtistDetails(artistIds, artistCounts);
     }
 
-    // Busca os detalhes dos artistas em lotes de 50 (conforme paginação)
+    // Busca os detalhes dos artistas em lotes de 50
     async function fetchArtistDetails(artistIds, artistCounts) {
       let batchSize = 50;
       for (let i = 0; i < artistIds.length; i += batchSize) {
@@ -172,15 +221,14 @@
           genreData[genre].artists[artistId] = (genreData[genre].artists[artistId] || 0) + artist.savedCount;
         });
       }
-      // Embaralha a lista de gêneros que ainda não foram duelados
+      // Embaralha os gêneros que ainda não participaram do duelo
       unusedGenres = shuffleArray(unusedGenres);
-      // Oculta a barra de progresso e exibe a seção de duelo
       document.getElementById('progress-section').style.display = 'none';
       document.getElementById('duel-section').style.display = 'block';
       nextDuelRound();
     }
 
-    // Função utilitária para embaralhar um array
+    // Função para embaralhar um array
     function shuffleArray(array) {
       let currentIndex = array.length, temporaryValue, randomIndex;
       while (currentIndex !== 0) {
@@ -193,19 +241,18 @@
       return array;
     }
 
-    // Lógica do duelo: determina qual par de gêneros será exibido a seguir
+    // Determina o próximo par de gêneros para duelo
     function nextDuelRound() {
       let pair = getNextDuelPair();
       if (!pair) {
-        // Se não houver mais pares disponíveis, o usuário poderá finalizar
         return;
       }
       displayDuelPair(pair[0], pair[1]);
     }
 
-    // Retorna o próximo par de gêneros de acordo com as regras:
-    // Se existir 2 ou mais gêneros (dos que já participaram) com a mesma pontuação, eles serão o par.
-    // Só sorteia 2 novos se não houver tal empate; e os sorteados são removidos dos que ainda não participaram.
+    // Regras do duelo:
+    // - Se houver 2 ou mais gêneros empatados entre os já duelados, estes serão exibidos.
+    // - Caso contrário, são sorteados 2 novos gêneros que ainda não participaram.
     function getNextDuelPair() {
       let scoreGroups = {};
       duelledGenres.forEach(genre => {
@@ -228,17 +275,17 @@
       return null;
     }
 
-    // Exibe os dois gêneros na tela em ordem aleatória
+    // Exibe os dois gêneros na tela em ordem aleatória (sem exibir pontos)
     function displayDuelPair(genre1, genre2) {
       let container = document.getElementById('duel-buttons');
       container.innerHTML = '';
       let pair = shuffleArray([genre1, genre2]);
       pair.forEach(genre => {
         let btn = document.createElement('button');
-        btn.className = 'btn btn-outline-secondary genre-btn';
-        btn.innerText = genre + ' (' + genreData[genre].score + ' ponto' + (genreData[genre].score !== 1 ? 's' : '') + ')';
+        btn.className = 'genre-btn';
+        btn.innerText = genre;
         btn.onclick = function() {
-          // Ao selecionar, o gênero ganha 1 ponto e inicia novo duelo
+          // Ao clicar, o gênero selecionado ganha 1 ponto (atualização interna) e inicia nova rodada
           genreData[genre].score++;
           nextDuelRound();
         };
@@ -246,7 +293,7 @@
       });
     }
 
-    // Ao clicar em "Pronto", determina o gênero com maior pontuação
+    // Ao clicar em "Pronto", determina e exibe o gênero vencedor (sem exibir pontuação)
     document.getElementById('done-btn').addEventListener('click', function() {
       let winner = null;
       for (let genre in genreData) {
@@ -258,10 +305,10 @@
       displayWinner(winner);
     });
 
-    // Exibe o gênero vencedor e lista os artistas relacionados, ordenados por quantidade de músicas salvas
+    // Exibe o gênero vencedor e lista os artistas relacionados (ordenados pela quantidade de músicas salvas)
     function displayWinner(winnerGenre) {
       document.getElementById('result-section').style.display = 'block';
-      document.getElementById('winning-genre').innerText = winnerGenre + ' (' + genreData[winnerGenre].score + ' pontos)';
+      document.getElementById('winning-genre').innerText = winnerGenre;
       let artists = [];
       for (let artistId in genreData[winnerGenre].artists) {
         artists.push({
@@ -276,7 +323,7 @@
       artists.forEach(artist => {
         let div = document.createElement('div');
         div.className = 'artist-item';
-        div.innerText = artist.name + ' (' + artist.savedCount + ' músicas)';
+        div.innerText = artist.name;
         div.onclick = function() {
           window.open('https://open.spotify.com/artist/' + artist.id, '_blank');
         };
