@@ -89,6 +89,7 @@
              background-color: var(--dark-gray);
              cursor: not-allowed;
              transform: none;
+             opacity: 0.7; /* Indicate disabled state */
         }
 
 
@@ -181,6 +182,7 @@
             margin-top: 15px;
             font-style: italic;
             color: var(--medium-gray);
+            min-height: 1.2em; /* Reserve space */
         }
 
 
@@ -514,6 +516,7 @@
         let genreScores = {}; // { genreName: score }
         let currentPair = []; // [genreA, genreB]
         let activeGenresList = []; // Lista de todos os gêneros para sorteio
+        let randomlySelectedGenres = new Set(); // << NOVO: Rastreia gêneros já sorteados ALEATORIAMENTE
         let isFetching = false; // Flag para evitar múltiplas chamadas
         let isSortingActive = false; // Flag para controlar cliques durante o sorteio
 
@@ -547,13 +550,18 @@
             if (showLoginButton) {
                  loginSection.classList.remove('hidden');
             }
+             // Para o sorteio se um erro ocorrer durante ele
+             isSortingActive = false;
+             genreButtonA.disabled = true;
+             genreButtonB.disabled = true;
+
         }
 
         // Função para atualizar barra de progresso
         function updateProgress(progressBar, progressText, current, total) {
             // Garante que current não exceda total para a barra de progresso
-            const cappedCurrent = Math.min(current, total);
-            const percentage = total > 0 ? Math.round((cappedCurrent / total) * 100) : 0;
+            const cappedCurrent = Math.min(current, total || 0); // Adiciona || 0 para evitar NaN se total for undefined inicialmente
+            const percentage = (total > 0) ? Math.round((cappedCurrent / total) * 100) : 0;
             progressBar.value = percentage;
             // progressBar.max = 100; // Definido no HTML
             progressText.textContent = `${percentage}%`;
@@ -567,6 +575,18 @@
             const params = new URLSearchParams(window.location.hash.substring(1)); // Pega da #
             const token = params.get('access_token');
             const error = params.get('error');
+             const state = params.get('state');
+             const storedState = localStorage.getItem('spotify_auth_state');
+
+            // Verifica o state para proteção CSRF
+            if (state && (!storedState || state !== storedState)) {
+                showError("Erro de autenticação: Parâmetro 'state' inválido. Possível ataque CSRF.", true);
+                localStorage.removeItem('spotify_auth_state'); // Limpa o state inválido
+                window.location.hash = ''; // Limpa o hash
+                return;
+            }
+             localStorage.removeItem('spotify_auth_state'); // Limpa o state após verificação bem-sucedida
+
 
              if (error) {
                 showError(`Erro de autenticação do Spotify: ${error}. Por favor, tente logar novamente.`, true);
@@ -614,7 +634,11 @@
         // Função genérica para chamadas API (simplificada, focando na paginação e erros comuns)
         async function fetchSpotifyAPI(url, options = {}) {
             if (!accessToken) {
-                throw new Error("Token de acesso não disponível.");
+                 // Não joga erro aqui diretamente, apenas retorna null ou objeto de erro
+                 // para ser tratado pelo chamador, evitando parar toda a execução
+                 console.error("Token de acesso não disponível.");
+                 showError("Sua sessão expirou ou é inválida. Por favor, faça login novamente.", true);
+                 return { error: true, message: "Token de acesso não disponível." };
             }
 
             const defaultOptions = {
@@ -626,22 +650,30 @@
                 const response = await fetch(url, mergedOptions);
 
                 if (!response.ok) {
+                    let errorDetails = `${response.status}: ${response.statusText}`;
+                     try { // Tenta ler o corpo da resposta de erro
+                         const errorBody = await response.json();
+                         errorDetails += ` - ${errorBody.error?.message || JSON.stringify(errorBody)}`;
+                     } catch (e) { /* Ignora se não conseguir ler o corpo */ }
+
                     // Tratamento específico de erros
                     if (response.status === 401) {
                          accessToken = null; // Invalida o token
-                         throw new Error("Token de acesso inválido ou expirado. Por favor, faça login novamente.");
+                         console.error("Erro 401 - Token inválido/expirado:", errorDetails);
+                         showError("Token de acesso inválido ou expirado. Por favor, faça login novamente.", true);
+                         return { error: true, status: 401, message: "Token inválido/expirado." };
                     }
                     if (response.status === 429) {
                         const retryAfter = parseInt(response.headers.get('Retry-After') || '5', 10);
-                        console.warn(`Limite de requisições atingido. Tentando novamente em ${retryAfter} segundos...`);
+                        console.warn(`Limite de requisições (429). Tentando novamente em ${retryAfter} segundos... URL: ${url}`);
                          loadingStatus.textContent += ` (Aguardando ${retryAfter}s...)`; // Atualiza status
-                        await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+                        await new Promise(resolve => setTimeout(resolve, retryAfter * 1000 + 100)); // Adiciona 100ms extra
                         return fetchSpotifyAPI(url, mergedOptions); // Tenta a mesma requisição novamente
                     }
                      // Outros erros
-                     const errorData = await response.text(); // Tenta pegar mais detalhes do erro
-                     console.error("Spotify API Error Data:", errorData);
-                     throw new Error(`Erro na API do Spotify (${response.status}): ${response.statusText}. Detalhes: ${errorData.substring(0, 200)}`);
+                     console.error(`Erro na API do Spotify (${errorDetails}). URL: ${url}`);
+                     showError(`Falha na comunicação com a API (${response.status}). Tente recarregar.`);
+                     return { error: true, status: response.status, message: `Erro na API: ${errorDetails}` };
                 }
 
                 // Retorna null se for uma resposta 204 No Content, comum em PUT/DELETE
@@ -651,14 +683,11 @@
 
                 return await response.json(); // Retorna os dados JSON
 
-            } catch (error) {
-                 // Se for um erro de token expirado, mostra o botão de login
-                 if (error.message.includes("Token de acesso inválido")) {
-                     showError(error.message, true);
-                 } else {
-                     showError(`Falha na comunicação com a API: ${error.message}`);
-                 }
-                 throw error; // Re-lança o erro para parar a execução onde foi chamado
+            } catch (networkError) {
+                 // Erro de rede (offline, DNS, etc.)
+                 console.error("Erro de Rede:", networkError);
+                 showError(`Falha na comunicação com a API: ${networkError.message}. Verifique sua conexão.`);
+                 return { error: true, message: `Erro de Rede: ${networkError.message}` };
             }
         }
 
@@ -667,18 +696,28 @@
         async function fetchAllSavedTracks() {
             let tracks = [];
             let nextUrl = `${SPOTIFY_API_BASE_URL}/me/tracks?limit=${PAGINATION_LIMIT}`;
-            let totalItems = 0;
+            let totalItems = null; // Começa como null
             let fetchedCount = 0;
 
              loadingStatus.textContent = `Músicas: Iniciando busca...`;
-            updateProgress(tracksProgress, tracksProgressText, 0, 1); // Inicia barra
+             updateProgress(tracksProgress, tracksProgressText, 0, 1); // Inicia barra (max 1 = 0%)
 
             try {
                  while (nextUrl) {
                      const data = await fetchSpotifyAPI(nextUrl);
 
-                    if (!totalItems && data.total) {
+                     // Verifica se houve erro na chamada da API
+                     if (data?.error) {
+                         throw new Error(data.message || "Erro ao buscar página de músicas.");
+                     }
+                     if (!data) { // Caso a API retorne algo inesperado
+                          throw new Error("Resposta inválida da API ao buscar músicas.");
+                     }
+
+
+                    if (totalItems === null && typeof data.total === 'number') {
                         totalItems = data.total; // Pega o total na primeira resposta
+                        console.log(`Total de músicas salvas reportado pela API: ${totalItems}`);
                          updateProgress(tracksProgress, tracksProgressText, fetchedCount, totalItems); // Atualiza max da barra
                      }
 
@@ -686,9 +725,11 @@
                      tracks = tracks.concat(currentItems);
                      fetchedCount += currentItems.length;
 
-                    // Atualiza progresso
-                     updateProgress(tracksProgress, tracksProgressText, fetchedCount, totalItems);
-                     loadingStatus.textContent = `Músicas: Buscando... ${fetchedCount} de ${totalItems || 'Muitas'}`;
+                    // Atualiza progresso (usa fetchedCount como total se totalItems ainda for null)
+                    const currentTotal = totalItems ?? fetchedCount; // Usa total real se disponível
+                    updateProgress(tracksProgress, tracksProgressText, fetchedCount, currentTotal);
+                     loadingStatus.textContent = `Músicas: Buscando... ${fetchedCount}${totalItems !== null ? ` de ${totalItems}` : ''}`;
+
 
                      nextUrl = data.next; // URL para a próxima página ou null
 
@@ -696,7 +737,10 @@
                     await new Promise(resolve => setTimeout(resolve, 50));
                 }
             } catch (error) {
-                // Erro já tratado em fetchSpotifyAPI
+                // Erro já foi mostrado por showError dentro de fetchSpotifyAPI ou aqui
+                 console.error("Falha no loop de busca de músicas:", error);
+                 if (!errorSection.classList.contains('hidden')) { /* Já mostrou erro? */ }
+                 else { showError(`Erro ao buscar músicas salvas: ${error.message}`); }
                 return null; // Indica falha
             }
 
@@ -710,15 +754,22 @@
             const artistIds = new Set();
             // Mapeia os IDs dos artistas principais de cada faixa salva
             trackItems.forEach(item => {
-                if (item.track && item.track.artists && item.track.artists.length > 0) {
-                    // Considera apenas o primeiro artista listado para simplificar,
-                    // ou itere por todos se quiser ser mais completo
-                     item.track.artists.forEach(artist => artistIds.add(artist.id));
+                if (item?.track?.artists) { // Adiciona checagens de nulidade
+                     item.track.artists.forEach(artist => {
+                         if(artist?.id) artistIds.add(artist.id)
+                     });
                 }
             });
 
             const uniqueArtistIds = Array.from(artistIds);
             const totalArtistsToFetch = uniqueArtistIds.length;
+             if (totalArtistsToFetch === 0) {
+                 console.warn("Nenhum ID de artista encontrado nas faixas.");
+                 updateProgress(artistsProgress, artistsProgressText, 0, 0);
+                 loadingStatus.textContent = `Artistas: Nenhum artista para buscar.`;
+                 return {}; // Retorna objeto vazio
+             }
+
             let fetchedArtistCount = 0;
             let allArtistDetails = {}; // Armazena os detalhes aqui
 
@@ -734,29 +785,45 @@
 
                     const url = `${SPOTIFY_API_BASE_URL}/artists?ids=${batchIds.join(',')}`;
                      const data = await fetchSpotifyAPI(url);
-                    const artistsData = data.artists || [];
+
+                     // Verifica se houve erro na chamada da API
+                     if (data?.error) {
+                         throw new Error(data.message || `Erro ao buscar lote ${i / PAGINATION_LIMIT + 1} de artistas.`);
+                     }
+                     if (!data?.artists) { // Checa se a resposta contém a lista de artistas
+                         console.warn(`Resposta inválida da API ao buscar artistas (lote ${i / PAGINATION_LIMIT + 1}):`, data);
+                         // Continua para o próximo lote, mas loga o aviso
+                         fetchedArtistCount += batchIds.length; // Assume que o lote falhou, mas avança a contagem
+                         continue;
+                     }
+
+                    const artistsData = data.artists;
 
                      artistsData.forEach(artist => {
-                         if (artist) { // Checa se o artista foi encontrado pela API
+                         if (artist?.id && artist.name) { // Checa se o artista retornado tem ID e nome
                             // Não precisamos mais contar aqui, faremos isso depois
                              allArtistDetails[artist.id] = {
                                 name: artist.name,
                                 genres: artist.genres || [],
-                                url: artist.external_urls.spotify,
+                                url: artist.external_urls?.spotify, // Checa nulidade
                                 id: artist.id // Guarda o ID para referência futura
                                 // savedTrackCount será calculado depois
                             };
                             // Adiciona gêneros ao Set global
-                             (artist.genres || []).forEach(genre => allGenres.add(genre));
+                             (artist.genres || []).forEach(genre => {
+                                 if (genre && typeof genre === 'string' && genre.trim() !== '') { // Garante que o gênero é válido
+                                      allGenres.add(genre.trim().toLowerCase()); // Padroniza para minúsculas
+                                 }
+                             });
                          } else {
-                             console.warn(`API retornou null para um ID no lote: ${batchIds.join(',')}`);
+                             console.warn(`API retornou artista inválido ou nulo no lote: ${batchIds.join(',')}`, artist);
                          }
                     });
 
-                     // Atualiza o contador baseado no tamanho do lote processado
+                     // Atualiza o contador baseado no número de IDs enviados no lote
                      fetchedArtistCount += batchIds.length;
                     // Garante que o progresso não ultrapasse o total
-                    const currentProgress = Math.min(fetchedArtistCount, totalArtistsToFetch);
+                    const currentProgress = Math.min(fetchedCount, totalArtistsToFetch); // Corrigido para usar fetchedCount correto
                     updateProgress(artistsProgress, artistsProgressText, currentProgress, totalArtistsToFetch);
                      loadingStatus.textContent = `Artistas: Buscando... ${currentProgress} de ${totalArtistsToFetch}`;
 
@@ -764,7 +831,10 @@
                     await new Promise(resolve => setTimeout(resolve, 75)); // Aumentei um pouco a pausa
                 }
             } catch (error) {
-                // Erro já tratado em fetchSpotifyAPI
+                // Erro já foi mostrado por showError dentro de fetchSpotifyAPI ou aqui
+                 console.error("Falha no loop de busca de artistas:", error);
+                 if (!errorSection.classList.contains('hidden')) { /* Já mostrou erro? */ }
+                 else { showError(`Erro ao buscar detalhes dos artistas: ${error.message}`); }
                 return null; // Indica falha
             }
 
@@ -773,7 +843,7 @@
             Object.values(allArtistDetails).forEach(artist => {
                  let count = 0;
                  trackItems.forEach(item => {
-                     if (item.track && item.track.artists && item.track.artists.some(a => a.id === artist.id)) {
+                     if (item?.track?.artists?.some(a => a.id === artist.id)) { // Checagem de nulidade
                          count++;
                      }
                  });
@@ -788,30 +858,51 @@
 
         // Função para iniciar a busca de dados após o login
         async function startDataFetching() {
-             if (isFetching) return; // Previne múltiplas execuções
+             if (isFetching) {
+                 console.log("Busca de dados já em andamento.");
+                 return;
+             }
              isFetching = true; // Marca como buscando
-            showSection(loadingSection);
+             showSection(loadingSection);
+             // Reseta estado anterior se houver
+             userSavedTracks = [];
+             artistDetails = {};
+             allGenres = new Set();
+             genreScores = {};
+             randomlySelectedGenres = new Set();
+             activeGenresList = [];
+             currentPair = [];
+
 
             // 1. Buscar todas as músicas salvas
              const savedTrackItems = await fetchAllSavedTracks();
              if (!savedTrackItems) {
                  isFetching = false; // Reseta flag em caso de erro
-                 // Erro já foi mostrado por fetchSpotifyAPI/showError
+                 // Erro já foi mostrado
                  return;
              }
              // Simplifica os dados das faixas se necessário (opcional)
-             userSavedTracks = savedTrackItems.map(item => ({
-                 id: item.track.id,
-                 name: item.track.name,
-                 artists: item.track.artists.map(a => ({ id: a.id, name: a.name, url: a.external_urls.spotify }))
-             }));
+             userSavedTracks = savedTrackItems.filter(item => item?.track?.id && item.track.name && item.track.artists?.length > 0) // Filtra faixas inválidas
+                                             .map(item => ({
+                                                 id: item.track.id,
+                                                 name: item.track.name,
+                                                 artists: item.track.artists.map(a => ({ id: a.id, name: a.name, url: a.external_urls.spotify }))
+                                             }));
+             if (userSavedTracks.length !== savedTrackItems.length) {
+                  console.warn(`Filtradas ${savedTrackItems.length - userSavedTracks.length} faixas inválidas ou sem artistas.`);
+             }
+             if (userSavedTracks.length === 0 && savedTrackItems.length > 0) {
+                 showError("Nenhuma faixa válida com artistas encontrada em suas músicas salvas.");
+                 isFetching = false;
+                 return;
+             }
 
 
              // 2. Buscar detalhes dos artistas
-             const fetchedArtistDetails = await fetchArtistDetails(savedTrackItems);
-             if (!fetchedArtistDetails) {
+             const fetchedArtistDetails = await fetchArtistDetails(savedTrackItems); // Passa os itens completos
+             if (fetchedArtistDetails === null) { // Checa explicitamente por null indicando erro
                  isFetching = false; // Reseta flag em caso de erro
-                 // Erro já foi mostrado por fetchSpotifyAPI/showError
+                 // Erro já foi mostrado
                  return;
              }
              artistDetails = fetchedArtistDetails;
@@ -819,13 +910,15 @@
 
             // 3. Prepara para o sorteio
             if (allGenres.size < 2) {
-                showError(`Não foram encontrados gêneros suficientes (mínimo 2) em suas músicas salvas para iniciar o sorteio. Encontrados: ${allGenres.size > 0 ? Array.from(allGenres).join(', ') : 'Nenhum'}`);
+                const foundGenres = allGenres.size > 0 ? Array.from(allGenres).join(', ') : 'Nenhum';
+                showError(`Não foram encontrados gêneros suficientes (mínimo 2) nos artistas das suas músicas salvas para iniciar o sorteio. Encontrados: ${foundGenres}.`);
                 isFetching = false;
                 return;
             }
 
             activeGenresList = Array.from(allGenres).sort(); // Ordena para consistência
             activeGenresList.forEach(genre => { genreScores[genre] = 0; }); // Inicializa placar
+            randomlySelectedGenres = new Set(); // Garante que está limpo
 
             console.log("Dados carregados, iniciando sorteio...");
              isFetching = false; // Terminou a busca
@@ -835,62 +928,119 @@
         // ----- Lógica do Sorteio -----
 
         function startSorting() {
+             if (activeGenresList.length < 2) {
+                  showError("Não há gêneros suficientes para iniciar o sorteio.");
+                  return;
+             }
              isSortingActive = true; // Ativa o sorteio
              displayNextPair(); // Mostra o primeiro par
              showSection(sortingSection);
         }
 
 
-        // Seleciona 2 gêneros aleatórios e diferentes
+        // --- getRandomGenres MODIFICADA ---
+        // Seleciona 2 gêneros para o duelo com as novas regras
         function getRandomGenres() {
-             if (activeGenresList.length < 2) {
-                 console.warn("Tentando sortear com menos de 2 gêneros ativos.");
-                 return activeGenresList.length === 1 ? [activeGenresList[0], activeGenresList[0]] : [];
-             }
+            if (activeGenresList.length < 2) {
+                console.warn("Tentando sortear com menos de 2 gêneros ativos.");
+                return [];
+            }
 
-            // Verifica empates no topo
-            let maxScore = -1;
-            let topScorers = [];
-             // Encontra a maior pontuação atual
-            for (const score of Object.values(genreScores)) {
-                 if (score > maxScore) {
-                     maxScore = score;
-                 }
-             }
-            // Encontra todos os gêneros com a maior pontuação
-             if (maxScore >= 0) { // Apenas considera se houver pontuações
-                for (const [genre, score] of Object.entries(genreScores)) {
-                    if (score === maxScore) {
-                        topScorers.push(genre);
-                    }
-                 }
-             }
+            // 1. Prioritize Ties (Highest score first)
+            const scoresMap = {};
+            for (const [genre, score] of Object.entries(genreScores)) {
+                if (!scoresMap[score]) {
+                    scoresMap[score] = [];
+                }
+                scoresMap[score].push(genre);
+            }
+
+            // Find the highest score level with at least 2 genres tied
+            const sortedScores = Object.keys(scoresMap).map(Number).sort((a, b) => b - a); // Scores descending
+
+            for (const score of sortedScores) {
+                const tiedGenres = scoresMap[score];
+                if (tiedGenres && tiedGenres.length >= 2) {
+                    console.log(`Prioritizing tie at score ${score}: ${tiedGenres.join(', ')}`);
+                    // Randomly select two different genres from this tied group
+                    let indexA, indexB;
+                    // Adiciona uma proteção simples contra loop infinito se tiedGenres tiver apenas 1 elemento (não deveria acontecer aqui)
+                    if (tiedGenres.length < 2) continue;
+                    do {
+                        indexA = Math.floor(Math.random() * tiedGenres.length);
+                        indexB = Math.floor(Math.random() * tiedGenres.length);
+                    } while (indexA === indexB);
+                    // Return the tied pair - DO NOT add to randomlySelectedGenres
+                    return [tiedGenres[indexA], tiedGenres[indexB]];
+                }
+            }
+
+            // 2. No Ties Found - Select Randomly (Avoiding Repeats)
+            console.log("No ties found, selecting randomly avoiding repeats.");
+
+            // Determine genres available for random selection
+            const availableForRandom = activeGenresList.filter(genre => !randomlySelectedGenres.has(genre));
+            console.log(`Available for random selection (${availableForRandom.length}): ${availableForRandom.join(', ') || 'None'}`);
+            // console.log(`Already selected randomly (${randomlySelectedGenres.size}): ${Array.from(randomlySelectedGenres).join(', ') || 'None'}`);
 
 
-             // Se houver 2 ou mais empatados no topo, força o confronto entre dois deles
-             if (topScorers.length >= 2) {
-                 console.log("Confronto de líderes:", topScorers.join(', '));
-                 // Pega 2 aleatórios dos empatados no topo
+            let selectedPair = [];
+
+            if (availableForRandom.length >= 2) {
+                // Select two different genres from the available pool
+                console.log("Selecting from available pool...");
                 let indexA, indexB;
-                 do {
-                     indexA = Math.floor(Math.random() * topScorers.length);
-                     indexB = Math.floor(Math.random() * topScorers.length);
-                 } while (indexA === indexB);
-                 return [topScorers[indexA], topScorers[indexB]];
-             }
+                do {
+                    indexA = Math.floor(Math.random() * availableForRandom.length);
+                    indexB = Math.floor(Math.random() * availableForRandom.length);
+                } while (indexA === indexB);
+                selectedPair = [availableForRandom[indexA], availableForRandom[indexB]];
+                console.log(`Selected randomly from available: ${selectedPair.join(' vs ')}`);
+            } else {
+                // Not enough available, reset the 'randomly selected' list and pick from all
+                console.warn("Resetting randomly selected list as < 2 available. Picking from all active genres.");
+                randomlySelectedGenres.clear(); // Reset the set
 
-            // Senão, pega 2 aleatórios da lista toda, garantindo que sejam diferentes
-            let indexA, indexB;
-            do {
-                indexA = Math.floor(Math.random() * activeGenresList.length);
-                indexB = Math.floor(Math.random() * activeGenresList.length);
-            } while (indexA === indexB || !activeGenresList[indexA] || !activeGenresList[indexB]); // Checa se índices são válidos
+                if (activeGenresList.length < 2) { // Double check after reset possibility
+                     console.error("Cannot select pair, less than 2 active genres overall.");
+                     return [];
+                }
 
-            return [activeGenresList[indexA], activeGenresList[indexB]];
+                let indexA, indexB;
+                 // Select two different genres from the *full* active list
+                console.log("Selecting from ALL active genres after reset...");
+                do {
+                    indexA = Math.floor(Math.random() * activeGenresList.length);
+                    indexB = Math.floor(Math.random() * activeGenresList.length);
+                } while (indexA === indexB);
+                 selectedPair = [activeGenresList[indexA], activeGenresList[indexB]];
+                console.log(`Selected randomly from ALL after reset: ${selectedPair.join(' vs ')}`);
+            }
+
+            // Add the *randomly* selected pair to the tracking set
+            if (selectedPair.length === 2) {
+                randomlySelectedGenres.add(selectedPair[0]);
+                randomlySelectedGenres.add(selectedPair[1]);
+                 // console.log(`Updated randomlySelectedGenres: ${Array.from(randomlySelectedGenres).join(', ')}`);
+            } else {
+                 console.error("Failed to select a valid pair.");
+                 return []; // Retorna vazio se falhar
+            }
+
+            return selectedPair;
         }
+        // --- Fim da getRandomGenres MODIFICADA ---
+
 
         // Exibe o próximo par de gêneros
         function displayNextPair() {
+            // Garante que o estado está pronto
+             if (!activeGenresList || activeGenresList.length < 2) {
+                 showError("Estado inválido para continuar o sorteio.");
+                 isSortingActive = false;
+                 return;
+             }
+
             currentPair = getRandomGenres();
              if (!currentPair || currentPair.length < 2) {
                 console.warn("Não foi possível obter um par de gêneros válido. Finalizando.");
@@ -914,7 +1064,7 @@
 
         // Função chamada ao clicar em um gênero
         function selectGenre(event) {
-             if (!isSortingActive) return; // Ignora cliques se o sorteio não está ativo
+             if (!isSortingActive || event.target.disabled) return; // Ignora cliques se o sorteio não está ativo ou botão desabilitado
 
             const selectedGenre = event.target.dataset.genre;
 
@@ -924,15 +1074,13 @@
 
             if (selectedGenre && genreScores.hasOwnProperty(selectedGenre)) {
                 genreScores[selectedGenre]++;
-                console.log(`Ponto para: ${selectedGenre}. Placar:`, Object.entries(genreScores).sort(([,a],[,b]) => b-a)); // Log placar ordenado
+                console.log(`Ponto para: ${selectedGenre}. Placar:`, Object.entries(genreScores).filter(([,s])=> s > 0).sort(([,a],[,b]) => b-a)); // Log placar ordenado > 0
                 // Pequena pausa antes de mostrar o próximo par (feedback visual)
                  setTimeout(displayNextPair, 150); // 150ms de pausa
             } else {
                  console.error("Gênero selecionado inválido ou não encontrado:", selectedGenre, event.target);
                  showError("Ocorreu um erro ao selecionar o gênero. Tente recarregar a página.");
-                 // Reabilita botões em caso de erro inesperado
-                 genreButtonA.disabled = false;
-                 genreButtonB.disabled = false;
+                 // Reabilita botões em caso de erro inesperado? Não, deixa desabilitado.
              }
         }
 
@@ -950,11 +1098,18 @@
                  return;
              }
 
-            const maxScore = Math.max(...Object.values(genreScores));
-            const winners = Object.entries(genreScores)
-                                .filter(([_, score]) => score === maxScore)
-                                .map(([genre]) => genre)
-                                .sort(); // Ordena vencedores alfabeticamente
+             // Filtra apenas gêneros com pontuação > 0 para determinar o vencedor
+             const validScores = Object.entries(genreScores).filter(([, score]) => score > 0);
+
+             if (validScores.length === 0) {
+                  winnerDisplay.innerHTML = '<p>Nenhum gênero recebeu pontos.</p>';
+                  return;
+             }
+
+            const maxScore = Math.max(...validScores.map(([, score]) => score));
+            const winners = validScores.filter(([_, score]) => score === maxScore)
+                                     .map(([genre]) => genre)
+                                     .sort(); // Ordena vencedores alfabeticamente
 
             console.log("Gênero(s) vencedor(es):", winners, "com pontuação:", maxScore);
 
@@ -974,6 +1129,7 @@
                      displayArtistsForGenre({ target: winnerDisplay.firstChild });
                  }
              } else {
+                 // Isso não deve acontecer devido à checagem de validScores.length > 0, mas por segurança:
                  winnerDisplay.innerHTML = '<p>Não foi possível determinar um gênero vencedor.</p>';
              }
         }
@@ -994,8 +1150,16 @@
             artistListUl.innerHTML = ''; // Limpa lista anterior
 
             // Filtra artistas que contêm o gênero selecionado E TEM MÚSICAS SALVAS
+            // Certifique-se de que artistDetails existe e tem dados
+             if (!artistDetails || Object.keys(artistDetails).length === 0) {
+                  console.warn("Detalhes dos artistas não disponíveis para filtragem.");
+                  artistListUl.innerHTML = '<li>Erro ao carregar detalhes dos artistas.</li>';
+                  artistListContainer.classList.remove('hidden');
+                  return;
+             }
+
             const filteredArtists = Object.values(artistDetails)
-                .filter(artist => artist.genres.includes(selectedGenre) && artist.savedTrackCount > 0)
+                .filter(artist => artist?.genres?.includes(selectedGenre) && artist.savedTrackCount > 0) // Adiciona checagem de nulidade
                 .sort((a, b) => b.savedTrackCount - a.savedTrackCount); // Ordena por contagem de músicas salvas (desc)
 
             console.log(`Encontrados ${filteredArtists.length} artistas para ${selectedGenre} com músicas salvas.`);
@@ -1007,6 +1171,8 @@
                 artistListUl.appendChild(li);
             } else {
                 filteredArtists.forEach(artist => {
+                    if (!artist?.name || !artist.url) return; // Pula artistas inválidos
+
                     const li = document.createElement('li');
                     const link = document.createElement('a');
                     link.href = artist.url;
