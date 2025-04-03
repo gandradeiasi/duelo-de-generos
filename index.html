@@ -29,7 +29,7 @@
       padding: 15px 30px;
       font-size: 1.2rem;
     }
-    /* Botões de gêneros sem exibir pontuação */
+    /* Botões dos gêneros (não exibem pontuação) */
     .genre-btn {
       margin: 10px;
       font-size: 1.5rem;
@@ -100,9 +100,8 @@
   
   <!-- Scripts JavaScript -->
   <script>
-    // Variáveis globais
     let accessToken = null;
-    // Estrutura para cada gênero: { score: 0, artists: { [artistId]: count } }
+    // Estrutura para cada gênero: { score: number, artists: { [artistId]: count } }
     let genreData = {};
     // Dados completos dos artistas: { [artistId]: { name, genres, savedCount } }
     let allArtistData = {};
@@ -127,16 +126,16 @@
       const redirectUri = window.location.origin + window.location.pathname;
       const scopes = 'user-library-read';
       const authUrl = 'https://accounts.spotify.com/authorize' +
-        '?response_type=token' +
-        '&client_id=' + encodeURIComponent(clientId) +
-        '&scope=' + encodeURIComponent(scopes) +
-        '&redirect_uri=' + encodeURIComponent(redirectUri);
+                      '?response_type=token' +
+                      '&client_id=' + encodeURIComponent(clientId) +
+                      '&scope=' + encodeURIComponent(scopes) +
+                      '&redirect_uri=' + encodeURIComponent(redirectUri);
       window.location = authUrl;
     }
 
     document.getElementById('login-btn').addEventListener('click', login);
 
-    // Verifica se há token de acesso ao carregar a página
+    // Ao carregar a página, verifica se há token de acesso
     window.onload = async function() {
       accessToken = getAccessTokenFromHash();
       if (accessToken) {
@@ -146,12 +145,12 @@
       }
     };
 
-    // Busca todas as músicas salvas com paginação de 50 em 50
+    // Busca todas as músicas salvas (paginação de 50 em 50)
     async function fetchSavedTracks() {
       let allTracks = [];
       let limit = 50;
       let offset = 0;
-      let total = 1; // valor inicial para entrar no loop
+      let total = 1;
       while (offset < total) {
         let response = await fetch(`https://api.spotify.com/v1/me/tracks?limit=${limit}&offset=${offset}`, {
           headers: { 'Authorization': 'Bearer ' + accessToken }
@@ -160,7 +159,7 @@
         total = data.total;
         allTracks = allTracks.concat(data.items);
         offset += limit;
-        // Atualiza a barra de progresso (primeiros 50% para músicas)
+        // Primeiros 50% da barra para carregar músicas
         let percent = Math.min(50, Math.floor((offset / total) * 50));
         updateProgress(percent);
       }
@@ -169,14 +168,13 @@
 
     // Processa as músicas para contar quantas vezes cada artista aparece
     async function processTracks(tracks) {
-      let artistCounts = {}; // { artistId: count }
+      let artistCounts = {};
       tracks.forEach(item => {
         let track = item.track;
         track.artists.forEach(artist => {
           artistCounts[artist.id] = (artistCounts[artist.id] || 0) + 1;
         });
       });
-      // Após contar, busca os detalhes de cada artista
       let artistIds = Object.keys(artistCounts);
       await fetchArtistDetails(artistIds, artistCounts);
     }
@@ -197,14 +195,14 @@
             savedCount: artistCounts[artist.id] || 0
           };
         });
-        // Atualiza a barra de progresso (próximos 50% para artistas)
+        // Próximos 50% da barra para carregar artistas
         let percent = 50 + Math.floor(((i + batch.length) / artistIds.length) * 50);
         updateProgress(percent);
       }
       buildGenreData();
     }
 
-    // Constrói a estrutura de gêneros a partir dos dados dos artistas
+    // Constrói a estrutura de gêneros com base nos artistas
     function buildGenreData() {
       for (let artistId in allArtistData) {
         let artist = allArtistData[artistId];
@@ -212,7 +210,7 @@
           if (!genreData[genre]) {
             genreData[genre] = { score: 0, artists: {} };
           }
-          // Soma a quantidade de músicas salvas daquele artista para o gênero
+          // Soma a quantidade de músicas salvas para o gênero
           genreData[genre].artists[artistId] = (genreData[genre].artists[artistId] || 0) + artist.savedCount;
         });
       }
@@ -221,7 +219,7 @@
       nextDuelRound();
     }
 
-    // Função para embaralhar um array
+    // Função utilitária para embaralhar um array
     function shuffleArray(array) {
       let currentIndex = array.length, temporaryValue, randomIndex;
       while (currentIndex !== 0) {
@@ -234,31 +232,28 @@
       return array;
     }
 
-    // Determina o próximo par de gêneros para o duelo
+    // Define o próximo par de gêneros para duelo
     function getNextDuelPair() {
-      // Primeiro, verifica se há pelo menos 2 gêneros com pontuação 0
-      let zeroScoreGenres = Object.keys(genreData).filter(genre => genreData[genre].score === 0);
-      if (zeroScoreGenres.length >= 2) {
-         return shuffleArray(zeroScoreGenres).slice(0,2);
-      }
-      // Caso contrário, procura por gêneros com pontuação > 0 que estejam empatados (mínimo 2)
+      // Agrupa os gêneros pela pontuação
       let groups = {};
       Object.keys(genreData).forEach(genre => {
-         if (genreData[genre].score > 0) {
-           let score = genreData[genre].score;
-           if (!groups[score]) groups[score] = [];
-           groups[score].push(genre);
-         }
+         let score = genreData[genre].score;
+         if (!groups[score]) groups[score] = [];
+         groups[score].push(genre);
       });
-      for (let score in groups) {
-        if (groups[score].length >= 2) {
-          return shuffleArray(groups[score]).slice(0,2);
-        }
+      // Verifica se existe algum grupo com pelo menos 2 gêneros
+      let tieGroups = Object.keys(groups).filter(score => groups[score].length >= 2);
+      if (tieGroups.length > 0) {
+         // Seleciona o grupo com a maior pontuação
+         let highestScore = Math.max(...tieGroups.map(s => parseInt(s)));
+         let candidateGroup = groups[highestScore];
+         return shuffleArray(candidateGroup).slice(0, 2);
       }
-      return null;
+      // Se nenhum grupo tiver empate, sorteia 2 gêneros aleatoriamente de todos
+      return shuffleArray(Object.keys(genreData)).slice(0, 2);
     }
 
-    // Exibe os dois gêneros na tela em ordem aleatória (sem exibir pontos)
+    // Exibe os dois gêneros na tela (sem exibir pontuação)
     function displayDuelPair(genre1, genre2) {
       let container = document.getElementById('duel-buttons');
       container.innerHTML = '';
@@ -268,7 +263,7 @@
         btn.className = 'genre-btn';
         btn.innerText = genre;
         btn.onclick = function() {
-          // Ao clicar, o gênero selecionado ganha 1 ponto (atualização interna) e inicia nova rodada
+          // Ao clicar, incrementa 1 ponto para o gênero escolhido (atualização interna)
           genreData[genre].score++;
           nextDuelRound();
         };
@@ -284,19 +279,19 @@
       }
     }
 
-    // Ao clicar em "Pronto", determina e exibe o gênero vencedor (sem exibir pontuação)
+    // Ao clicar em "Pronto", define o gênero vencedor e exibe os artistas
     document.getElementById('done-btn').addEventListener('click', function() {
       let winner = null;
-      for (let genre in genreData) {
-        if (!winner || genreData[genre].score > genreData[winner].score) {
-          winner = genre;
-        }
-      }
+      Object.keys(genreData).forEach(genre => {
+         if (!winner || genreData[genre].score > genreData[winner].score) {
+            winner = genre;
+         }
+      });
       document.getElementById('duel-section').style.display = 'none';
       displayWinner(winner);
     });
 
-    // Exibe o gênero vencedor e lista os artistas relacionados (ordenados pela quantidade de músicas salvas)
+    // Exibe o gênero vencedor e lista os artistas (ordenados pela quantidade de músicas salvas)
     function displayWinner(winnerGenre) {
       document.getElementById('result-section').style.display = 'block';
       document.getElementById('winning-genre').innerText = winnerGenre;
