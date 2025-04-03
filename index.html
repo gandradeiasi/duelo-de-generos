@@ -105,6 +105,8 @@
     let genreData = {};
     // Dados completos dos artistas: { [artistId]: { name, genres, savedCount } }
     let allArtistData = {};
+    // Histórico dos duelos já ocorridos: chave = "GêneroA|GêneroB", valor = vencedor
+    let duelHistory = {};
 
     // Atualiza a barra de progresso
     function updateProgress(percent) {
@@ -241,10 +243,9 @@
          if (!groups[score]) groups[score] = [];
          groups[score].push(genre);
       });
-      // Verifica se existe algum grupo com pelo menos 2 gêneros
+      // Se existir algum grupo com pelo menos 2 gêneros empatados, escolhe o grupo com a maior pontuação
       let tieGroups = Object.keys(groups).filter(score => groups[score].length >= 2);
       if (tieGroups.length > 0) {
-         // Seleciona o grupo com a maior pontuação
          let highestScore = Math.max(...tieGroups.map(s => parseInt(s)));
          let candidateGroup = groups[highestScore];
          return shuffleArray(candidateGroup).slice(0, 2);
@@ -253,33 +254,58 @@
       return shuffleArray(Object.keys(genreData)).slice(0, 2);
     }
 
-    // Exibe os dois gêneros na tela (sem exibir pontuação)
+    // Inicia a próxima rodada do duelo
+    function nextDuelRound() {
+      let pair = getNextDuelPair();
+      if (pair) {
+        // Define a chave ordenada para o histórico
+        let sortedKey = pair.slice().sort().join("|");
+        // Se já ocorreu um duelo entre esses gêneros, a decisão é automática
+        if (duelHistory.hasOwnProperty(sortedKey)) {
+          let winner = duelHistory[sortedKey];
+          genreData[winner].score++;
+          // Avança para a próxima rodada sem exibir o duelo
+          nextDuelRound();
+          return;
+        }
+        // Caso contrário, exibe o duelo para interação do usuário
+        displayDuelPair(pair[0], pair[1]);
+      }
+    }
+
+    // Exibe os dois gêneros na tela e atualiza o cabeçalho conforme o empate
     function displayDuelPair(genre1, genre2) {
       let container = document.getElementById('duel-buttons');
       container.innerHTML = '';
+      
+      // Atualiza o cabeçalho: se a pontuação dos gêneros for maior que 0, mostra "Desempate"
+      let currentScore = genreData[genre1].score; // ambos terão a mesma pontuação
+      let header = document.querySelector("#duel-section h2");
+      if (currentScore > 0) {
+         header.innerText = "Desempate";
+      } else {
+         header.innerText = "Escolha seu Gênero";
+      }
+      
+      // Exibe os botões em ordem aleatória
       let pair = shuffleArray([genre1, genre2]);
       pair.forEach(genre => {
         let btn = document.createElement('button');
         btn.className = 'genre-btn';
         btn.innerText = genre;
         btn.onclick = function() {
-          // Ao clicar, incrementa 1 ponto para o gênero escolhido (atualização interna)
+          // Ao selecionar, incrementa 1 ponto para o gênero escolhido
           genreData[genre].score++;
+          // Registra a decisão no histórico para essa dupla
+          let sortedKey = [genre1, genre2].sort().join("|");
+          duelHistory[sortedKey] = genre;
           nextDuelRound();
         };
         container.appendChild(btn);
       });
     }
 
-    // Inicia a próxima rodada do duelo
-    function nextDuelRound() {
-      let pair = getNextDuelPair();
-      if (pair) {
-        displayDuelPair(pair[0], pair[1]);
-      }
-    }
-
-    // Ao clicar em "Pronto", define o gênero vencedor e exibe os artistas
+    // Ao clicar em "Pronto", define o gênero vencedor e exibe os artistas correspondentes
     document.getElementById('done-btn').addEventListener('click', function() {
       let winner = null;
       Object.keys(genreData).forEach(genre => {
