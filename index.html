@@ -104,10 +104,6 @@
     let accessToken = null;
     // Estrutura para cada gênero: { score: 0, artists: { [artistId]: count } }
     let genreData = {};
-    // Lista de gêneros que ainda não participaram do duelo
-    let unusedGenres = [];
-    // Lista de gêneros que já foram exibidos no duelo (para empates)
-    let duelledGenres = [];
     // Dados completos dos artistas: { [artistId]: { name, genres, savedCount } }
     let allArtistData = {};
 
@@ -215,14 +211,11 @@
         artist.genres.forEach(genre => {
           if (!genreData[genre]) {
             genreData[genre] = { score: 0, artists: {} };
-            unusedGenres.push(genre);
           }
           // Soma a quantidade de músicas salvas daquele artista para o gênero
           genreData[genre].artists[artistId] = (genreData[genre].artists[artistId] || 0) + artist.savedCount;
         });
       }
-      // Embaralha os gêneros que ainda não participaram do duelo
-      unusedGenres = shuffleArray(unusedGenres);
       document.getElementById('progress-section').style.display = 'none';
       document.getElementById('duel-section').style.display = 'block';
       nextDuelRound();
@@ -241,36 +234,26 @@
       return array;
     }
 
-    // Determina o próximo par de gêneros para duelo
-    function nextDuelRound() {
-      let pair = getNextDuelPair();
-      if (!pair) {
-        return;
-      }
-      displayDuelPair(pair[0], pair[1]);
-    }
-
-    // Regras do duelo:
-    // - Se houver 2 ou mais gêneros empatados entre os já duelados, estes serão exibidos.
-    // - Caso contrário, são sorteados 2 novos gêneros que ainda não participaram.
+    // Determina o próximo par de gêneros para o duelo
     function getNextDuelPair() {
-      let scoreGroups = {};
-      duelledGenres.forEach(genre => {
-        let score = genreData[genre].score;
-        if (!scoreGroups[score]) scoreGroups[score] = [];
-        if (!scoreGroups[score].includes(genre)) scoreGroups[score].push(genre);
-      });
-      for (let score in scoreGroups) {
-        if (scoreGroups[score].length >= 2) {
-          let group = shuffleArray(scoreGroups[score]);
-          return [group[0], group[1]];
-        }
+      // Primeiro, verifica se há pelo menos 2 gêneros com pontuação 0
+      let zeroScoreGenres = Object.keys(genreData).filter(genre => genreData[genre].score === 0);
+      if (zeroScoreGenres.length >= 2) {
+         return shuffleArray(zeroScoreGenres).slice(0,2);
       }
-      if (unusedGenres.length >= 2) {
-        let genre1 = unusedGenres.pop();
-        let genre2 = unusedGenres.pop();
-        duelledGenres.push(genre1, genre2);
-        return [genre1, genre2];
+      // Caso contrário, procura por gêneros com pontuação > 0 que estejam empatados (mínimo 2)
+      let groups = {};
+      Object.keys(genreData).forEach(genre => {
+         if (genreData[genre].score > 0) {
+           let score = genreData[genre].score;
+           if (!groups[score]) groups[score] = [];
+           groups[score].push(genre);
+         }
+      });
+      for (let score in groups) {
+        if (groups[score].length >= 2) {
+          return shuffleArray(groups[score]).slice(0,2);
+        }
       }
       return null;
     }
@@ -291,6 +274,14 @@
         };
         container.appendChild(btn);
       });
+    }
+
+    // Inicia a próxima rodada do duelo
+    function nextDuelRound() {
+      let pair = getNextDuelPair();
+      if (pair) {
+        displayDuelPair(pair[0], pair[1]);
+      }
     }
 
     // Ao clicar em "Pronto", determina e exibe o gênero vencedor (sem exibir pontuação)
