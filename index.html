@@ -770,7 +770,7 @@
                  return {}; // Retorna objeto vazio
              }
 
-            let fetchedArtistCount = 0;
+            let fetchedArtistCount = 0; // <<-- Variável declarada aqui
             let allArtistDetails = {}; // Armazena os detalhes aqui
 
             console.log(`Buscando detalhes para ${totalArtistsToFetch} artistas únicos...`);
@@ -821,9 +821,10 @@
                     });
 
                      // Atualiza o contador baseado no número de IDs enviados no lote
-                     fetchedArtistCount += batchIds.length;
+                     fetchedArtistCount += batchIds.length; // Atualiza a variável correta
                     // Garante que o progresso não ultrapasse o total
-                    const currentProgress = Math.min(fetchedCount, totalArtistsToFetch); // Corrigido para usar fetchedCount correto
+                    // --- V --- CORREÇÃO APLICADA AQUI --- V ---
+                    const currentProgress = Math.min(fetchedArtistCount, totalArtistsToFetch);
                     updateProgress(artistsProgress, artistsProgressText, currentProgress, totalArtistsToFetch);
                      loadingStatus.textContent = `Artistas: Buscando... ${currentProgress} de ${totalArtistsToFetch}`;
 
@@ -833,8 +834,10 @@
             } catch (error) {
                 // Erro já foi mostrado por showError dentro de fetchSpotifyAPI ou aqui
                  console.error("Falha no loop de busca de artistas:", error);
-                 if (!errorSection.classList.contains('hidden')) { /* Já mostrou erro? */ }
-                 else { showError(`Erro ao buscar detalhes dos artistas: ${error.message}`); }
+                 // Certifique-se de que showError é chamado se ainda não foi
+                 if (errorSection.classList.contains('hidden')) {
+                      showError(`Erro ao buscar detalhes dos artistas: ${error.message}`);
+                 }
                 return null; // Indica falha
             }
 
